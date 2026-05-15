@@ -10,6 +10,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
   <style>
+    html { zoom: 1.5; }
     * { font-family: 'IBM Plex Sans', sans-serif; }
     .mono { font-family: 'IBM Plex Mono', monospace; }
     
@@ -17,7 +18,7 @@
     ::-webkit-scrollbar-track { background: #1e293b; }
     ::-webkit-scrollbar-thumb { background: #475569; border-radius: 4px; }
     ::-webkit-scrollbar-thumb:hover { background: #64748b; }
-    
+
     .day-cell {
       transition: background-color 0.1s ease;
     }
@@ -40,6 +41,10 @@
     }
     .event-preliminary {
       opacity: 0.5;
+    }
+    .day-cell.today {
+      background-color: rgba(99, 102, 241, 0.08);
+      box-shadow: inset 0 0 0 1px rgba(129, 140, 248, 0.45);
     }
     
     .conflict-indicator {
@@ -256,7 +261,8 @@
                       :class="{
                         'selecting': isInSelection(day.date),
                         'selected': isSelected(day.date),
-                        'bg-slate-900/30': day.isPlaceholder
+                        'bg-slate-900/30': day.isPlaceholder,
+                        'today': day.isToday
                       }"
                       :data-date="day.date"
                       @mousedown="onDayMouseDown($event, day)"
