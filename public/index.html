@@ -1,0 +1,1049 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>YearView</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <style>
+    * { font-family: 'IBM Plex Sans', sans-serif; }
+    .mono { font-family: 'IBM Plex Mono', monospace; }
+    
+    ::-webkit-scrollbar { width: 8px; height: 8px; }
+    ::-webkit-scrollbar-track { background: #1e293b; }
+    ::-webkit-scrollbar-thumb { background: #475569; border-radius: 4px; }
+    ::-webkit-scrollbar-thumb:hover { background: #64748b; }
+    
+    .day-cell {
+      transition: background-color 0.1s ease;
+    }
+    .day-cell:hover {
+      background-color: rgba(255,255,255,0.03);
+    }
+    .day-cell.selecting {
+      background-color: rgba(99, 102, 241, 0.2) !important;
+    }
+    .day-cell.selected {
+      background-color: rgba(99, 102, 241, 0.3) !important;
+    }
+    
+    .event-bar {
+      cursor: pointer;
+      transition: filter 0.1s ease;
+    }
+    .event-bar:hover {
+      filter: brightness(1.15);
+    }
+    .event-preliminary {
+      opacity: 0.5;
+    }
+    
+    .conflict-indicator {
+      position: absolute;
+      top: 1px;
+      right: 1px;
+      width: 10px;
+      height: 10px;
+      background: #ef4444;
+      color: white;
+      font-size: 7px;
+      font-weight: bold;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 20;
+    }
+    
+    .modal-backdrop {
+      background: rgba(0, 0, 0, 0.7);
+      backdrop-filter: blur(4px);
+    }
+    
+    .tooltip {
+      position: fixed;
+      z-index: 1000;
+      pointer-events: none;
+    }
+    
+    /* Full height calendar grid */
+    .calendar-grid {
+      display: grid;
+      height: 100%;
+    }
+    .calendar-grid.cols-1 { grid-template-columns: 1fr; grid-template-rows: 1fr; }
+    .calendar-grid.cols-2 { grid-template-columns: repeat(2, 1fr); grid-template-rows: 1fr; }
+    .calendar-grid.cols-2x2 { grid-template-columns: repeat(2, 1fr); grid-template-rows: repeat(2, 1fr); }
+    .calendar-grid.cols-3x2 { grid-template-columns: repeat(3, 1fr); grid-template-rows: repeat(2, 1fr); }
+    .calendar-grid.cols-4x3 { grid-template-columns: repeat(4, 1fr); grid-template-rows: repeat(3, 1fr); }
+    
+    .month-card {
+      display: flex;
+      flex-direction: column;
+      min-height: 0;
+    }
+    .month-body {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      min-height: 0;
+    }
+    .days-grid {
+      flex: 1;
+      display: grid;
+      grid-template-columns: repeat(7, 1fr);
+      grid-template-rows: repeat(6, 1fr);
+    }
+  </style>
+</head>
+<body class="bg-slate-900 text-slate-100 h-screen overflow-hidden" x-data="yearView()" x-init="init()">
+  
+  <div class="flex h-full">
+    
+    <!-- Sidebar -->
+    <aside class="w-64 bg-slate-800 border-r border-slate-700 flex flex-col flex-shrink-0">
+      
+      <div class="p-3 border-b border-slate-700">
+        <h1 class="text-lg font-semibold text-indigo-400">YearView</h1>
+        <p class="text-xs text-slate-500">Year-at-a-glance planning</p>
+      </div>
+      
+      <!-- Stats -->
+      <div class="p-3 border-b border-slate-700">
+        <h2 class="text-xs font-medium text-slate-400 mb-2">Statistics</h2>
+        <div class="space-y-1">
+          <div class="flex justify-between text-sm">
+            <span class="text-slate-500">Travel Days</span>
+            <span class="mono text-indigo-400" x-text="stats.travel_days || 0"></span>
+          </div>
+          <template x-for="tag in stats.tag_stats || []" :key="tag.id">
+            <div class="flex justify-between text-xs">
+              <span class="flex items-center gap-1.5">
+                <span class="w-2 h-2 rounded-full" :style="`background: ${tag.color}`"></span>
+                <span class="text-slate-500" x-text="tag.name"></span>
+              </span>
+              <span class="mono text-slate-400" x-text="tag.total_days || 0"></span>
+            </div>
+          </template>
+        </div>
+      </div>
+      
+      <!-- Tags -->
+      <div class="p-3 border-b border-slate-700 flex-shrink-0">
+        <div class="flex justify-between items-center mb-2">
+          <h2 class="text-xs font-medium text-slate-400">Tags</h2>
+          <button @click="showTagModal = true" class="text-xs text-indigo-400 hover:text-indigo-300">+ Add</button>
+        </div>
+        <div class="space-y-0.5 max-h-32 overflow-y-auto">
+          <template x-for="tag in tags" :key="tag.id">
+            <div class="flex items-center justify-between group py-0.5">
+              <label class="flex items-center gap-1.5 cursor-pointer flex-1">
+                <input type="checkbox" 
+                       :checked="!hiddenTags.has(tag.id)" 
+                       @change="toggleTagVisibility(tag.id)"
+                       class="rounded border-slate-600 bg-slate-700 text-indigo-500 focus:ring-indigo-500 focus:ring-offset-0 w-3 h-3">
+                <span class="w-2.5 h-2.5 rounded" :style="`background: ${tag.color}`"></span>
+                <span class="text-xs text-slate-300" x-text="tag.name"></span>
+              </label>
+              <button @click="editTag(tag)" class="opacity-0 group-hover:opacity-100 text-slate-500 hover:text-slate-300 text-xs px-1">✎</button>
+            </div>
+          </template>
+        </div>
+      </div>
+      
+      <!-- Filters -->
+      <div class="p-3 border-b border-slate-700">
+        <h2 class="text-xs font-medium text-slate-400 mb-2">Show</h2>
+        <div class="space-y-1">
+          <label class="flex items-center gap-2 cursor-pointer">
+            <input type="checkbox" x-model="showTravel" class="rounded border-slate-600 bg-slate-700 text-indigo-500 focus:ring-indigo-500 focus:ring-offset-0 w-3 h-3">
+            <span class="text-xs text-slate-300">Travel/Out of town</span>
+          </label>
+          <label class="flex items-center gap-2 cursor-pointer">
+            <input type="checkbox" x-model="showInTown" class="rounded border-slate-600 bg-slate-700 text-indigo-500 focus:ring-indigo-500 focus:ring-offset-0 w-3 h-3">
+            <span class="text-xs text-slate-300">In town</span>
+          </label>
+          <label class="flex items-center gap-2 cursor-pointer">
+            <input type="checkbox" x-model="showPreliminary" class="rounded border-slate-600 bg-slate-700 text-indigo-500 focus:ring-indigo-500 focus:ring-offset-0 w-3 h-3">
+            <span class="text-xs text-slate-300">Preliminary events</span>
+          </label>
+        </div>
+      </div>
+      
+      <!-- Export -->
+      <div class="p-3 mt-auto">
+        <button @click="exportYear()" class="w-full py-1.5 px-3 bg-slate-700 hover:bg-slate-600 text-slate-300 text-xs rounded transition-colors">
+          Export Year as Text
+        </button>
+      </div>
+      
+    </aside>
+    
+    <!-- Main Content -->
+    <main class="flex-1 flex flex-col min-h-0">
+      
+      <!-- Top Bar -->
+      <header class="h-12 bg-slate-800 border-b border-slate-700 flex items-center justify-between px-4 flex-shrink-0">
+        
+        <!-- Zoom Controls -->
+        <div class="flex items-center gap-1.5">
+          <span class="text-xs text-slate-500 mr-1">Zoom:</span>
+          <template x-for="z in zoomLevels" :key="z">
+            <button 
+              @click="setZoom(z)" 
+              :class="zoom === z ? 'bg-indigo-600 text-white' : 'bg-slate-700 text-slate-400 hover:bg-slate-600'"
+              class="px-2 py-1 text-xs rounded transition-colors"
+              x-text="z + 'mo'">
+            </button>
+          </template>
+        </div>
+        
+        <!-- Jump-to Navigator -->
+        <div class="flex items-center gap-3">
+          <button @click="jumpToToday()" class="text-xs text-indigo-400 hover:text-indigo-300">Today</button>
+          
+          <div class="flex items-center gap-1 bg-slate-700 rounded px-2 py-1">
+            <button @click="navigatorYear--; loadStats()" class="text-slate-400 hover:text-white px-1">←</button>
+            <span class="text-sm font-medium w-10 text-center" x-text="navigatorYear"></span>
+            <button @click="navigatorYear++; loadStats()" class="text-slate-400 hover:text-white px-1">→</button>
+          </div>
+          
+          <div class="grid grid-cols-6 gap-0.5">
+            <template x-for="(month, idx) in ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']" :key="idx">
+              <button 
+                @click="jumpTo(navigatorYear, idx)"
+                class="text-xs px-1 py-0.5 rounded hover:bg-indigo-600 hover:text-white text-slate-400 transition-colors"
+                x-text="month">
+              </button>
+            </template>
+          </div>
+        </div>
+        
+      </header>
+      
+      <!-- Calendar Grid - fills remaining space -->
+      <div class="flex-1 p-2 min-h-0">
+        <div class="calendar-grid h-full gap-2" :class="getGridClass()">
+          <template x-for="month in visibleMonths" :key="month.key">
+            <div class="month-card bg-slate-800 rounded border border-slate-700 overflow-hidden">
+              
+              <!-- Month Header -->
+              <div class="px-2 py-1 bg-slate-700/50 border-b border-slate-700 flex-shrink-0">
+                <span class="font-medium" 
+                      :class="zoom >= 6 ? 'text-[10px]' : 'text-xs'"
+                      x-text="month.name + ' ' + month.year"></span>
+              </div>
+              
+              <!-- Day Headers -->
+              <div class="grid grid-cols-7 border-b border-slate-700 flex-shrink-0" x-show="zoom <= 6">
+                <template x-for="day in ['S','M','T','W','T','F','S']">
+                  <div class="text-center text-slate-500 py-0.5" 
+                       :class="zoom >= 6 ? 'text-[8px]' : 'text-[10px]'"
+                       x-text="day"></div>
+                </template>
+              </div>
+              
+              <!-- Days Grid -->
+              <div class="month-body relative">
+                <div class="days-grid">
+                  <template x-for="day in month.days" :key="day.date">
+                    <div 
+                      class="day-cell relative border-r border-b border-slate-700/20 overflow-hidden"
+                      :class="{
+                        'selecting': isInSelection(day.date),
+                        'selected': isSelected(day.date),
+                        'bg-slate-900/30': day.isPlaceholder
+                      }"
+                      :data-date="day.date"
+                      @mousedown="onDayMouseDown($event, day)"
+                      @mouseup="onDayMouseUp($event, day)"
+                      @click="onDayClick($event, day)"
+                      @contextmenu.prevent="onDayRightClick($event, day)">
+                      
+                      <!-- Day Number -->
+                      <div class="absolute top-0 right-0.5 z-10"
+                           :class="zoom >= 12 ? 'text-[7px]' : (zoom >= 6 ? 'text-[8px]' : 'text-[10px]')"
+                           :style="day.isToday ? 'color: #818cf8; font-weight: 600;' : (day.isPlaceholder ? 'color: #334155;' : 'color: #64748b;')">
+                        <span x-text="day.dayNum"></span>
+                      </div>
+                      
+                      <!-- Conflict indicator -->
+                      <div x-show="hasConflict(day.date) && !day.isPlaceholder" class="conflict-indicator">!</div>
+                      
+                    </div>
+                  </template>
+                </div>
+                
+                <!-- Event bars overlay -->
+                <div class="absolute inset-0 pointer-events-none">
+                  <template x-for="segment in getEventSegmentsForMonth(month)" :key="segment.key">
+                    <div 
+                      class="event-bar absolute pointer-events-auto"
+                      :class="{ 'event-preliminary': segment.event.is_preliminary }"
+                      :style="getEventBarStyle(segment, month)"
+                      @mouseenter="showEventTooltip($event, segment.event)"
+                      @mouseleave="hideTooltip()"
+                      @click.stop="openEventDetail(segment.event)">
+                      <span x-show="zoom <= 2 && segment.showLabel" 
+                            class="text-white truncate block px-0.5 leading-tight"
+                            :class="zoom === 1 ? 'text-[10px]' : 'text-[9px]'"
+                            x-text="segment.event.title"></span>
+                    </div>
+                  </template>
+                </div>
+              </div>
+              
+            </div>
+          </template>
+        </div>
+      </div>
+      
+    </main>
+    
+  </div>
+  
+  <!-- Hover Tooltip -->
+  <div x-show="tooltip.show" 
+       x-transition:enter="transition ease-out duration-75"
+       x-transition:enter-start="opacity-0"
+       x-transition:enter-end="opacity-100"
+       x-transition:leave="transition ease-in duration-75"
+       class="tooltip bg-slate-800 border border-slate-600 rounded-lg shadow-xl p-2.5 max-w-xs"
+       :style="`left: ${tooltip.x}px; top: ${tooltip.y}px;`">
+    <div class="text-xs font-medium text-slate-200 mb-1" x-text="tooltip.event?.title"></div>
+    <div class="text-[10px] text-slate-400" x-text="tooltip.event ? formatDateRange(tooltip.event.start_date, tooltip.event.end_date) : ''"></div>
+    <div x-show="tooltip.event?.is_travel" class="text-[10px] text-amber-400 mt-0.5">✈ Travel</div>
+    <div x-show="tooltip.event?.description" class="text-[10px] text-slate-500 mt-1 line-clamp-2" x-text="tooltip.event?.description"></div>
+  </div>
+  
+  <!-- Event Modal -->
+  <div x-show="showEventModal" 
+       x-transition
+       class="fixed inset-0 modal-backdrop flex items-center justify-center z-50"
+       @click.self="closeEventModal()">
+    
+    <div class="bg-slate-800 rounded-xl shadow-2xl w-full max-w-md border border-slate-700" @click.stop>
+      
+      <div class="p-4 border-b border-slate-700 flex justify-between items-center">
+        <h3 class="font-medium" x-text="editingEvent ? 'Edit Event' : 'New Event'"></h3>
+        <button @click="closeEventModal()" class="text-slate-500 hover:text-slate-300">✕</button>
+      </div>
+      
+      <form @submit.prevent="saveEvent()" class="p-4 space-y-4">
+        
+        <div>
+          <label class="block text-sm text-slate-400 mb-1">Title</label>
+          <input type="text" x-model="eventForm.title" required
+                 class="w-full bg-slate-700 border border-slate-600 rounded px-3 py-2 text-sm focus:outline-none focus:border-indigo-500">
+        </div>
+        
+        <div class="grid grid-cols-2 gap-4">
+          <div>
+            <label class="block text-sm text-slate-400 mb-1">Start Date</label>
+            <input type="date" x-model="eventForm.start_date" required
+                   class="w-full bg-slate-700 border border-slate-600 rounded px-3 py-2 text-sm focus:outline-none focus:border-indigo-500">
+          </div>
+          <div>
+            <label class="block text-sm text-slate-400 mb-1">End Date</label>
+            <input type="date" x-model="eventForm.end_date" required
+                   class="w-full bg-slate-700 border border-slate-600 rounded px-3 py-2 text-sm focus:outline-none focus:border-indigo-500">
+          </div>
+        </div>
+        
+        <div>
+          <label class="block text-sm text-slate-400 mb-1">Tag</label>
+          <select x-model="eventForm.tag_id"
+                  class="w-full bg-slate-700 border border-slate-600 rounded px-3 py-2 text-sm focus:outline-none focus:border-indigo-500">
+            <option value="">No tag</option>
+            <template x-for="tag in tags" :key="tag.id">
+              <option :value="tag.id" x-text="tag.name"></option>
+            </template>
+          </select>
+        </div>
+        
+        <div class="flex gap-4">
+          <label class="flex items-center gap-2 cursor-pointer">
+            <input type="checkbox" x-model="eventForm.is_travel"
+                   class="rounded border-slate-600 bg-slate-700 text-indigo-500 focus:ring-indigo-500 focus:ring-offset-0">
+            <span class="text-sm text-slate-300">Travel / Out of town</span>
+          </label>
+          <label class="flex items-center gap-2 cursor-pointer">
+            <input type="checkbox" x-model="eventForm.is_preliminary"
+                   class="rounded border-slate-600 bg-slate-700 text-indigo-500 focus:ring-indigo-500 focus:ring-offset-0">
+            <span class="text-sm text-slate-300">Preliminary</span>
+          </label>
+        </div>
+        
+        <div>
+          <label class="block text-sm text-slate-400 mb-1">Description</label>
+          <textarea x-model="eventForm.description" rows="3"
+                    class="w-full bg-slate-700 border border-slate-600 rounded px-3 py-2 text-sm focus:outline-none focus:border-indigo-500 resize-none"></textarea>
+        </div>
+        
+        <div class="flex justify-between pt-2">
+          <button type="button" x-show="editingEvent" @click="deleteEvent()"
+                  class="px-4 py-2 text-red-400 hover:text-red-300 text-sm">Delete</button>
+          <div class="flex gap-2 ml-auto">
+            <button type="button" @click="closeEventModal()"
+                    class="px-4 py-2 bg-slate-700 hover:bg-slate-600 rounded text-sm">Cancel</button>
+            <button type="submit"
+                    class="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 rounded text-sm font-medium">Save</button>
+          </div>
+        </div>
+        
+      </form>
+      
+    </div>
+  </div>
+  
+  <!-- Tag Modal -->
+  <div x-show="showTagModal" 
+       x-transition
+       class="fixed inset-0 modal-backdrop flex items-center justify-center z-50"
+       @click.self="closeTagModal()">
+    
+    <div class="bg-slate-800 rounded-xl shadow-2xl w-full max-w-sm border border-slate-700">
+      
+      <div class="p-4 border-b border-slate-700 flex justify-between items-center">
+        <h3 class="font-medium" x-text="editingTag ? 'Edit Tag' : 'New Tag'"></h3>
+        <button @click="closeTagModal()" class="text-slate-500 hover:text-slate-300">✕</button>
+      </div>
+      
+      <form @submit.prevent="saveTag()" class="p-4 space-y-4">
+        
+        <div>
+          <label class="block text-sm text-slate-400 mb-1">Name</label>
+          <input type="text" x-model="tagForm.name" required
+                 class="w-full bg-slate-700 border border-slate-600 rounded px-3 py-2 text-sm focus:outline-none focus:border-indigo-500">
+        </div>
+        
+        <div>
+          <label class="block text-sm text-slate-400 mb-1">Color</label>
+          <div class="flex gap-2 flex-wrap">
+            <template x-for="color in tagColors" :key="color">
+              <button type="button" @click="tagForm.color = color"
+                      class="w-7 h-7 rounded-full border-2 transition-transform hover:scale-110"
+                      :class="tagForm.color === color ? 'border-white scale-110' : 'border-transparent'"
+                      :style="`background: ${color}`">
+              </button>
+            </template>
+          </div>
+        </div>
+        
+        <div class="flex justify-between pt-2">
+          <button type="button" x-show="editingTag" @click="deleteTag()"
+                  class="px-4 py-2 text-red-400 hover:text-red-300 text-sm">Delete</button>
+          <div class="flex gap-2 ml-auto">
+            <button type="button" @click="closeTagModal()"
+                    class="px-4 py-2 bg-slate-700 hover:bg-slate-600 rounded text-sm">Cancel</button>
+            <button type="submit"
+                    class="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 rounded text-sm font-medium">Save</button>
+          </div>
+        </div>
+        
+      </form>
+      
+    </div>
+  </div>
+  
+  <!-- Context Menu -->
+  <div x-show="contextMenu.show"
+       x-transition
+       @click.away="contextMenu.show = false"
+       class="fixed bg-slate-800 border border-slate-600 rounded-lg shadow-xl py-1 z-50"
+       :style="`left: ${contextMenu.x}px; top: ${contextMenu.y}px;`">
+    <button @click="newEventFromContext()" 
+            class="w-full px-4 py-2 text-left text-sm hover:bg-slate-700">
+      New Event
+    </button>
+  </div>
+
+<script>
+function yearView() {
+  return {
+    // Data
+    events: [],
+    tags: [],
+    stats: {},
+    
+    // View state
+    zoom: 2,
+    zoomLevels: [1, 2, 4, 6, 12],
+    visibleMonths: [],
+    currentYear: new Date().getFullYear(),
+    currentMonth: new Date().getMonth(),
+    navigatorYear: new Date().getFullYear(),
+    
+    // Selection state
+    selecting: false,
+    selectionStart: null,
+    selectionEnd: null,
+    shiftClickStart: null,
+    
+    // Filter state
+    hiddenTags: new Set(),
+    showTravel: true,
+    showInTown: true,
+    showPreliminary: true,
+    
+    // Modal state
+    showEventModal: false,
+    showTagModal: false,
+    editingEvent: null,
+    editingTag: null,
+    eventForm: {
+      title: '',
+      start_date: '',
+      end_date: '',
+      tag_id: '',
+      is_travel: false,
+      is_preliminary: false,
+      description: ''
+    },
+    tagForm: { name: '', color: '#6366f1' },
+    
+    // Tooltip
+    tooltip: { show: false, x: 0, y: 0, event: null },
+    tooltipTimeout: null,
+    
+    // Context menu
+    contextMenu: { show: false, x: 0, y: 0, date: null },
+    
+    // Tag colors
+    tagColors: [
+      '#ef4444', '#f97316', '#f59e0b', '#eab308', 
+      '#84cc16', '#22c55e', '#10b981', '#14b8a6',
+      '#06b6d4', '#0ea5e9', '#3b82f6', '#6366f1',
+      '#8b5cf6', '#a855f7', '#d946ef', '#ec4899'
+    ],
+    
+    async init() {
+      const now = new Date();
+      this.currentYear = now.getFullYear();
+      this.currentMonth = now.getMonth();
+      this.navigatorYear = this.currentYear;
+      
+      this.generateVisibleMonths();
+      
+      await this.loadTags();
+      await this.loadEvents();
+      await this.loadStats();
+    },
+    
+    async loadTags() {
+      const res = await fetch('/api/tags');
+      this.tags = await res.json();
+    },
+    
+    async loadEvents() {
+      const firstMonth = this.visibleMonths[0];
+      const lastMonth = this.visibleMonths[this.visibleMonths.length - 1];
+      
+      const start = `${firstMonth.year}-${String(firstMonth.monthNum + 1).padStart(2, '0')}-01`;
+      const lastDay = new Date(lastMonth.year, lastMonth.monthNum + 1, 0).getDate();
+      const end = `${lastMonth.year}-${String(lastMonth.monthNum + 1).padStart(2, '0')}-${lastDay}`;
+      
+      const res = await fetch(`/api/events?start=${start}&end=${end}`);
+      this.events = await res.json();
+    },
+    
+    async loadStats() {
+      const res = await fetch(`/api/stats?year=${this.navigatorYear}`);
+      this.stats = await res.json();
+    },
+    
+    generateVisibleMonths() {
+      const months = [];
+      let y = this.currentYear;
+      let m = this.currentMonth;
+      
+      for (let i = 0; i < this.zoom; i++) {
+        months.push(this.generateMonth(y, m));
+        m++;
+        if (m > 11) { m = 0; y++; }
+      }
+      
+      this.visibleMonths = months;
+    },
+    
+    generateMonth(year, month) {
+      const firstDay = new Date(year, month, 1);
+      const lastDay = new Date(year, month + 1, 0);
+      const startDayOfWeek = firstDay.getDay();
+      const daysInMonth = lastDay.getDate();
+      
+      const days = [];
+      const today = new Date();
+      const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+      
+      // Placeholder cells for alignment
+      for (let i = 0; i < startDayOfWeek; i++) {
+        days.push({
+          date: `placeholder-${year}-${month}-${i}`,
+          dayNum: '',
+          isPlaceholder: true,
+          isToday: false
+        });
+      }
+      
+      // Current month days
+      for (let d = 1; d <= daysInMonth; d++) {
+        const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+        days.push({
+          date: dateStr,
+          dayNum: d,
+          isPlaceholder: false,
+          isToday: dateStr === todayStr
+        });
+      }
+      
+      // Pad to 42 cells (6 rows)
+      while (days.length < 42) {
+        days.push({
+          date: `placeholder-end-${year}-${month}-${days.length}`,
+          dayNum: '',
+          isPlaceholder: true,
+          isToday: false
+        });
+      }
+      
+      const monthNames = ['January', 'February', 'March', 'April', 'May', 'June',
+                          'July', 'August', 'September', 'October', 'November', 'December'];
+      
+      return {
+        key: `${year}-${month}`,
+        year,
+        monthNum: month,
+        name: monthNames[month],
+        days,
+        firstDayIndex: startDayOfWeek,
+        daysInMonth
+      };
+    },
+    
+    getGridClass() {
+      if (this.zoom === 1) return 'cols-1';
+      if (this.zoom === 2) return 'cols-2';
+      if (this.zoom === 4) return 'cols-2x2';
+      if (this.zoom === 6) return 'cols-3x2';
+      if (this.zoom === 12) return 'cols-4x3';
+      return 'cols-2';
+    },
+    
+    setZoom(level) {
+      this.zoom = level;
+      this.generateVisibleMonths();
+      this.loadEvents();
+    },
+    
+    jumpTo(year, month) {
+      this.currentYear = year;
+      this.currentMonth = month;
+      this.generateVisibleMonths();
+      this.loadEvents();
+    },
+    
+    jumpToToday() {
+      const now = new Date();
+      this.currentYear = now.getFullYear();
+      this.currentMonth = now.getMonth();
+      this.navigatorYear = this.currentYear;
+      this.generateVisibleMonths();
+      this.loadEvents();
+      this.loadStats();
+    },
+    
+    // Event filtering
+    getEventsForDay(date) {
+      if (date.startsWith('placeholder')) return [];
+      
+      return this.events.filter(e => {
+        if (date < e.start_date || date > e.end_date) return false;
+        if (e.tag_id && this.hiddenTags.has(e.tag_id)) return false;
+        if (e.is_travel && !this.showTravel) return false;
+        if (!e.is_travel && !this.showInTown) return false;
+        if (e.is_preliminary && !this.showPreliminary) return false;
+        return true;
+      });
+    },
+    
+    hasConflict(date) {
+      if (date.startsWith('placeholder')) return false;
+      const dayEvents = this.getEventsForDay(date);
+      const hasTravel = dayEvents.some(e => e.is_travel);
+      const hasInTown = dayEvents.some(e => !e.is_travel);
+      return hasTravel && hasInTown;
+    },
+    
+    // Get event segments for a month - handles week wrapping
+    getEventSegmentsForMonth(month) {
+      const monthStart = `${month.year}-${String(month.monthNum + 1).padStart(2, '0')}-01`;
+      const monthEnd = `${month.year}-${String(month.monthNum + 1).padStart(2, '0')}-${String(month.daysInMonth).padStart(2, '0')}`;
+      
+      const monthEvents = this.events.filter(e => {
+        if (e.start_date > monthEnd || e.end_date < monthStart) return false;
+        if (e.tag_id && this.hiddenTags.has(e.tag_id)) return false;
+        if (e.is_travel && !this.showTravel) return false;
+        if (!e.is_travel && !this.showInTown) return false;
+        if (e.is_preliminary && !this.showPreliminary) return false;
+        return true;
+      });
+      
+      // Sort by start date, then duration
+      monthEvents.sort((a, b) => {
+        const aStart = a.start_date < monthStart ? monthStart : a.start_date;
+        const bStart = b.start_date < monthStart ? monthStart : b.start_date;
+        if (aStart !== bStart) return aStart.localeCompare(bStart);
+        const aDur = new Date(a.end_date) - new Date(a.start_date);
+        const bDur = new Date(b.end_date) - new Date(b.start_date);
+        return bDur - aDur;
+      });
+      
+      const segments = [];
+      // Track row assignments per week row (0-5)
+      const weekRowSlots = [[], [], [], [], [], []]; // Each week has array of end dates per slot
+      
+      for (const event of monthEvents) {
+        // Clamp to month
+        const eventStart = event.start_date < monthStart ? monthStart : event.start_date;
+        const eventEnd = event.end_date > monthEnd ? monthEnd : event.end_date;
+        
+        const startDay = parseInt(eventStart.split('-')[2]);
+        const endDay = parseInt(eventEnd.split('-')[2]);
+        
+        // Calculate grid positions
+        const startGridPos = month.firstDayIndex + startDay - 1;
+        const endGridPos = month.firstDayIndex + endDay - 1;
+        
+        const startWeek = Math.floor(startGridPos / 7);
+        const endWeek = Math.floor(endGridPos / 7);
+        
+        // Find a consistent row slot for this event across all weeks it spans
+        let rowSlot = 0;
+        let foundSlot = false;
+        
+        while (!foundSlot && rowSlot < 10) {
+          let slotAvailable = true;
+          for (let w = startWeek; w <= endWeek; w++) {
+            if (weekRowSlots[w][rowSlot] && weekRowSlots[w][rowSlot] >= eventStart) {
+              slotAvailable = false;
+              break;
+            }
+          }
+          if (slotAvailable) {
+            foundSlot = true;
+            for (let w = startWeek; w <= endWeek; w++) {
+              weekRowSlots[w][rowSlot] = eventEnd;
+            }
+          } else {
+            rowSlot++;
+          }
+        }
+        
+        // Create segment(s) for each week the event spans
+        for (let week = startWeek; week <= endWeek; week++) {
+          const weekStartCol = week === startWeek ? (startGridPos % 7) : 0;
+          const weekEndCol = week === endWeek ? (endGridPos % 7) : 6;
+          
+          segments.push({
+            key: `${event.id}-${week}`,
+            event,
+            week,
+            startCol: weekStartCol,
+            endCol: weekEndCol,
+            rowSlot,
+            showLabel: week === startWeek // Only show label on first segment
+          });
+        }
+      }
+      
+      return segments;
+    },
+    
+    getEventBarStyle(segment, month) {
+      const barHeight = this.zoom <= 2 ? 18 : (this.zoom <= 4 ? 14 : 10);
+      const topOffset = this.zoom <= 2 ? 14 : (this.zoom <= 4 ? 12 : 10);
+      const gap = 2;
+      
+      const left = (segment.startCol / 7 * 100);
+      const width = ((segment.endCol - segment.startCol + 1) / 7 * 100);
+      const top = `calc(${segment.week} * 100% / 6 + ${topOffset + segment.rowSlot * (barHeight + gap)}px)`;
+      
+      const color = segment.event.tag_color || '#6b7280';
+      
+      return `left: ${left}%; width: calc(${width}% - 2px); top: ${top}; height: ${barHeight}px; background: ${color}; border-radius: 2px;`;
+    },
+    
+    // Selection handling
+    onDayMouseDown(event, day) {
+      if (event.button !== 0 || day.isPlaceholder) return;
+      if (event.shiftKey && this.shiftClickStart) return;
+      
+      this.selecting = true;
+      this.selectionStart = day.date;
+      this.selectionEnd = day.date;
+      
+      // Track mouse movement for drag selection
+      const onMouseMove = (e) => {
+        const el = document.elementFromPoint(e.clientX, e.clientY);
+        const dateAttr = el?.closest('[data-date]')?.dataset?.date;
+        if (dateAttr && !dateAttr.startsWith('placeholder')) {
+          this.selectionEnd = dateAttr;
+        }
+      };
+      
+      const onMouseUp = () => {
+        document.removeEventListener('mousemove', onMouseMove);
+        document.removeEventListener('mouseup', onMouseUp);
+      };
+      
+      document.addEventListener('mousemove', onMouseMove);
+      document.addEventListener('mouseup', onMouseUp);
+    },
+    
+    onDayMouseUp(event, day) {
+      if (!this.selecting) return;
+      this.selecting = false;
+      
+      if (this.selectionStart && this.selectionEnd) {
+        const start = this.selectionStart < this.selectionEnd ? this.selectionStart : this.selectionEnd;
+        const end = this.selectionStart < this.selectionEnd ? this.selectionEnd : this.selectionStart;
+        this.openNewEventModal(start, end);
+      }
+      
+      this.selectionStart = null;
+      this.selectionEnd = null;
+    },
+    
+    onDayClick(event, day) {
+      if (day.isPlaceholder) return;
+      
+      if (event.shiftKey) {
+        if (this.shiftClickStart) {
+          const start = this.shiftClickStart < day.date ? this.shiftClickStart : day.date;
+          const end = this.shiftClickStart < day.date ? day.date : this.shiftClickStart;
+          this.openNewEventModal(start, end);
+          this.shiftClickStart = null;
+        } else {
+          this.shiftClickStart = day.date;
+        }
+        return;
+      }
+      
+      this.shiftClickStart = null;
+    },
+    
+    onDayRightClick(event, day) {
+      if (day.isPlaceholder) return;
+      
+      this.contextMenu = {
+        show: true,
+        x: event.clientX,
+        y: event.clientY,
+        date: day.date
+      };
+    },
+    
+    isInSelection(date) {
+      if (!this.selecting || !this.selectionStart || !this.selectionEnd) return false;
+      if (date.startsWith('placeholder')) return false;
+      const start = this.selectionStart < this.selectionEnd ? this.selectionStart : this.selectionEnd;
+      const end = this.selectionStart < this.selectionEnd ? this.selectionEnd : this.selectionStart;
+      return date >= start && date <= end;
+    },
+    
+    isSelected(date) {
+      if (date.startsWith('placeholder')) return false;
+      return this.shiftClickStart === date;
+    },
+    
+    // Tooltip - only on event bars
+    showEventTooltip(event, eventData) {
+      clearTimeout(this.tooltipTimeout);
+      this.tooltipTimeout = setTimeout(() => {
+        this.tooltip = {
+          show: true,
+          x: Math.min(event.clientX + 10, window.innerWidth - 250),
+          y: Math.min(event.clientY + 10, window.innerHeight - 100),
+          event: eventData
+        };
+      }, 300);
+    },
+    
+    hideTooltip() {
+      clearTimeout(this.tooltipTimeout);
+      this.tooltip.show = false;
+    },
+    
+    formatDateRange(start, end) {
+      const s = new Date(start + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+      const e = new Date(end + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+      return start === end ? s : `${s} – ${e}`;
+    },
+    
+    // Event CRUD
+    openNewEventModal(startDate, endDate) {
+      this.editingEvent = null;
+      this.eventForm = {
+        title: '',
+        start_date: startDate,
+        end_date: endDate,
+        tag_id: '',
+        is_travel: false,
+        is_preliminary: false,
+        description: ''
+      };
+      this.showEventModal = true;
+    },
+    
+    openEventDetail(event) {
+      this.editingEvent = event;
+      this.eventForm = {
+        title: event.title,
+        start_date: event.start_date,
+        end_date: event.end_date,
+        tag_id: event.tag_id || '',
+        is_travel: !!event.is_travel,
+        is_preliminary: !!event.is_preliminary,
+        description: event.description || ''
+      };
+      this.showEventModal = true;
+    },
+    
+    newEventFromContext() {
+      this.openNewEventModal(this.contextMenu.date, this.contextMenu.date);
+      this.contextMenu.show = false;
+    },
+    
+    closeEventModal() {
+      this.showEventModal = false;
+      this.editingEvent = null;
+      this.eventForm = {
+        title: '',
+        start_date: '',
+        end_date: '',
+        tag_id: '',
+        is_travel: false,
+        is_preliminary: false,
+        description: ''
+      };
+    },
+    
+    async saveEvent() {
+      const data = {
+        ...this.eventForm,
+        tag_id: this.eventForm.tag_id || null
+      };
+      
+      try {
+        if (this.editingEvent) {
+          await fetch(`/api/events/${this.editingEvent.id}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data)
+          });
+        } else {
+          await fetch('/api/events', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data)
+          });
+        }
+        
+        this.closeEventModal();
+        await this.loadEvents();
+        await this.loadStats();
+      } catch (err) {
+        alert('Error saving event: ' + err.message);
+      }
+    },
+    
+    async deleteEvent() {
+      if (!this.editingEvent) return;
+      if (!confirm('Delete this event?')) return;
+      
+      try {
+        await fetch(`/api/events/${this.editingEvent.id}`, { method: 'DELETE' });
+        this.closeEventModal();
+        await this.loadEvents();
+        await this.loadStats();
+      } catch (err) {
+        alert('Error deleting event: ' + err.message);
+      }
+    },
+    
+    // Tag CRUD
+    editTag(tag) {
+      this.editingTag = tag;
+      this.tagForm = { name: tag.name, color: tag.color };
+      this.showTagModal = true;
+    },
+    
+    closeTagModal() {
+      this.showTagModal = false;
+      this.editingTag = null;
+      this.tagForm = { name: '', color: '#6366f1' };
+    },
+    
+    async saveTag() {
+      try {
+        if (this.editingTag) {
+          await fetch(`/api/tags/${this.editingTag.id}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(this.tagForm)
+          });
+        } else {
+          await fetch('/api/tags', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(this.tagForm)
+          });
+        }
+        
+        this.closeTagModal();
+        await this.loadTags();
+        await this.loadEvents();
+        await this.loadStats();
+      } catch (err) {
+        alert('Error saving tag: ' + err.message);
+      }
+    },
+    
+    async deleteTag() {
+      if (!this.editingTag) return;
+      if (!confirm('Delete this tag? Events with this tag will keep their other data.')) return;
+      
+      try {
+        await fetch(`/api/tags/${this.editingTag.id}`, { method: 'DELETE' });
+        this.closeTagModal();
+        await this.loadTags();
+        await this.loadEvents();
+        await this.loadStats();
+      } catch (err) {
+        alert('Error deleting tag: ' + err.message);
+      }
+    },
+    
+    toggleTagVisibility(tagId) {
+      if (this.hiddenTags.has(tagId)) {
+        this.hiddenTags.delete(tagId);
+      } else {
+        this.hiddenTags.add(tagId);
+      }
+      this.hiddenTags = new Set(this.hiddenTags);
+    },
+    
+    async exportYear() {
+      window.open(`/api/export?year=${this.navigatorYear}`, '_blank');
+    }
+  };
+}
+</script>
+
+</body>
+</html>

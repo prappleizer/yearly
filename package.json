@@ -1,0 +1,15 @@
+{
+  "name": "yearly",
+  "version": "1.0.0",
+  "description": "Year-at-a-glance calendar for travel and event planning",
+  "main": "src/server.js",
+  "type": "module",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node --watch src/server.js"
+  },
+  "dependencies": {
+    "sql.js": "^1.11.0",
+    "express": "^4.21.0"
+  }
+}
